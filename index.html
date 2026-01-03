@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐾 The Abu Dhabi Pet Map - Your Complete Pet Services Directory</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Leaflet CSS & JS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <style>
+        #map {
+            height: calc(100vh - 120px);
+            width: 100%;
+        }
+
+        .category-pill {
+            transition: all 0.2s ease;
+        }
+
+        .category-pill:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .listing-card {
+            transition: all 0.3s ease;
+        }
+
+        .listing-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+        }
+
+        .filter-chip {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-chip:hover {
+            transform: scale(1.05);
+        }
+
+        .filter-chip.active {
+            ring: 2px;
+        }
+
+        /* Custom scrollbar */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* Mobile bottom sheet */
+        @media (max-width: 768px) {
+            #sidebar {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                max-height: 50vh;
+                border-radius: 20px 20px 0 0;
+                box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+            }
+
+            #map {
+                height: 50vh;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <span class="text-4xl">🐾</span>
+                    <div>
+                        <h1 class="text-2xl font-bold">The Abu Dhabi Pet Map</h1>
+                        <p class="text-sm text-blue-100">Your Complete Pet Services Directory</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="toggleView()" class="md:hidden bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-blue-50">
+                        <span id="viewToggleText">📋 List</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="mt-4">
+                <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="🔍 Search for vets, groomers, cafes..."
+                    class="w-full px-4 py-3 rounded-lg text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    onkeyup="filterListings()"
+                />
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex flex-col md:flex-row">
+        <!-- Sidebar - Filters & Directory -->
+        <aside id="sidebar" class="w-full md:w-96 bg-white md:h-screen overflow-y-auto custom-scrollbar border-r border-gray-200">
+            <div class="p-4">
+                <!-- Category Filters -->
+                <div class="mb-6">
+                    <h2 class="text-lg font-bold mb-3 text-gray-800">Categories</h2>
+                    <div class="flex flex-wrap gap-2" id="categoryFilters">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- District Filters -->
+                <div class="mb-6">
+                    <h2 class="text-lg font-bold mb-3 text-gray-800">Districts</h2>
+                    <div class="flex flex-wrap gap-2" id="districtFilters">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Open Now Filter -->
+                <div class="mb-6">
+                    <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" id="openNowFilter" onchange="filterListings()" class="w-5 h-5 text-green-600">
+                        <span class="font-semibold text-gray-700">🟢 Open Now</span>
+                    </label>
+                </div>
+
+                <!-- Results Count -->
+                <div class="mb-4 p-3 bg-blue-50 rounded-lg">
+                    <p class="text-sm font-semibold text-blue-800">
+                        Showing <span id="resultsCount">0</span> of <span id="totalCount">0</span> places
+                    </p>
+                </div>
+
+                <!-- Listings -->
+                <div id="listingsContainer">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map -->
+        <main class="flex-1">
+            <div id="map"></div>
+        </main>
+    </div>
+
+    <script>
+        // Category color mapping
+        const categoryColors = {
+            'Veterinary Clinic': { color: '#E74C3C', icon: '🏥' },
+            'Emergency Vet 24/7': { color: '#C0392B', icon: '🚨' },
+            'Pet Grooming': { color: '#9B59B6', icon: '✂️' },
+            'Pet Grooming & Pet Taxi': { color: '#8E44AD', icon: '✂️' },
+            'Pet Boarding': { color: '#3498DB', icon: '🏨' },
+            'Pet Boarding & Daycare': { color: '#2980B9', icon: '🏨' },
+            'Pet Boarding & Adoption': { color: '#1ABC9C', icon: '🏨' },
+            'Pet Shop': { color: '#E67E22', icon: '🛍️' },
+            'Aquarium & Pet Shop': { color: '#D35400', icon: '🐠' },
+            'Aquarium Shop': { color: '#D35400', icon: '🐠' },
+            'Pet-Friendly Restaurant': { color: '#27AE60', icon: '🍽️' },
+            'Pet-Friendly Cafe': { color: '#229954', icon: '☕' },
+            'Pet-Friendly Hotel': { color: '#16A085', icon: '🏨' },
+            'Pet-Friendly Apartment': { color: '#138D75', icon: '🏠' },
+            'Pet Training': { color: '#5B2C6F', icon: '🎓' },
+            'Pet Transportation': { color: '#F39C12', icon: '🚗' },
+            'Pet Recreation': { color: '#2ECC71', icon: '🐾' },
+            'Pet Adoption & Rescue': { color: '#E91E63', icon: '❤️' },
+            'Pet Daycare & Sitting': { color: '#3498DB', icon: '🏡' }
+        };
+
+        let map;
+        let markers = [];
+        let allListings = [];
+        let activeFilters = {
+            categories: new Set(),
+            districts: new Set(),
+            openNow: false,
+            search: ''
+        };
+
+        // Initialize map
+        function initMap() {
+            // Center on Abu Dhabi
+            map = L.map('map').setView([24.4539, 54.3773], 11);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        // Load and parse CSV
+        function loadData() {
+            Papa.parse('listings_seed.csv', {
+                download: true,
+                header: true,
+                complete: function(results) {
+                    allListings = results.data.filter(row => row.Name); // Filter empty rows
+                    console.log('Loaded', allListings.length, 'listings');
+                    initializeFilters();
+                    displayListings();
+                    displayMapMarkers();
+                },
+                error: function(error) {
+                    console.error('Error loading CSV:', error);
+                    document.getElementById('listingsContainer').innerHTML =
+                        '<div class="p-4 bg-red-100 text-red-800 rounded-lg">Error loading data. Please make sure listings_seed.csv is in the same folder.</div>';
+                }
+            });
+        }
+
+        // Initialize category and district filters
+        function initializeFilters() {
+            const categories = {};
+            const districts = new Set();
+
+            allListings.forEach(listing => {
+                // Count categories
+                if (!categories[listing.Category]) {
+                    categories[listing.Category] = 0;
+                }
+                categories[listing.Category]++;
+
+                // Collect districts
+                if (listing.District && listing.District !== 'Various') {
+                    districts.add(listing.District);
+                }
+            });
+
+            // Render category filters
+            const categoryContainer = document.getElementById('categoryFilters');
+            categoryContainer.innerHTML = `
+                <button onclick="toggleCategoryFilter('all')"
+                        class="filter-chip px-3 py-2 rounded-full text-sm font-semibold bg-blue-600 text-white active">
+                    All (${allListings.length})
+                </button>
+            `;
+
+            Object.entries(categories).sort((a, b) => b[1] - a[1]).forEach(([category, count]) => {
+                const color = categoryColors[category]?.color || '#95A5A6';
+                const icon = categoryColors[category]?.icon || '📌';
+                categoryContainer.innerHTML += `
+                    <button onclick="toggleCategoryFilter('${category}')"
+                            class="filter-chip px-3 py-2 rounded-full text-sm font-semibold border-2"
+                            style="border-color: ${color}; color: ${color};"
+                            data-category="${category}">
+                        ${icon} ${category.replace('Pet-Friendly ', '').replace('Pet ', '')} (${count})
+                    </button>
+                `;
+            });
+
+            // Render district filters
+            const districtContainer = document.getElementById('districtFilters');
+            districtContainer.innerHTML = '';
+            Array.from(districts).sort().forEach(district => {
+                districtContainer.innerHTML += `
+                    <button onclick="toggleDistrictFilter('${district}')"
+                            class="filter-chip px-3 py-2 rounded-full text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            data-district="${district}">
+                        📍 ${district}
+                    </button>
+                `;
+            });
+
+            document.getElementById('totalCount').textContent = allListings.length;
+        }
+
+        // Toggle category filter
+        function toggleCategoryFilter(category) {
+            if (category === 'all') {
+                activeFilters.categories.clear();
+                document.querySelectorAll('[data-category]').forEach(btn => {
+                    btn.classList.remove('active');
+                    const color = btn.style.borderColor;
+                    btn.style.backgroundColor = '';
+                    btn.style.color = color;
+                });
+            } else {
+                if (activeFilters.categories.has(category)) {
+                    activeFilters.categories.delete(category);
+                    const btn = document.querySelector(`[data-category="${category}"]`);
+                    const color = btn.style.borderColor;
+                    btn.classList.remove('active');
+                    btn.style.backgroundColor = '';
+                    btn.style.color = color;
+                } else {
+                    activeFilters.categories.add(category);
+                    const btn = document.querySelector(`[data-category="${category}"]`);
+                    const color = btn.style.borderColor;
+                    btn.classList.add('active');
+                    btn.style.backgroundColor = color;
+                    btn.style.color = 'white';
+                }
+            }
+            filterListings();
+        }
+
+        // Toggle district filter
+        function toggleDistrictFilter(district) {
+            if (activeFilters.districts.has(district)) {
+                activeFilters.districts.delete(district);
+                const btn = document.querySelector(`[data-district="${district}"]`);
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('bg-gray-200', 'text-gray-700');
+            } else {
+                activeFilters.districts.add(district);
+                const btn = document.querySelector(`[data-district="${district}"]`);
+                btn.classList.remove('bg-gray-200', 'text-gray-700');
+                btn.classList.add('bg-blue-600', 'text-white');
+            }
+            filterListings();
+        }
+
+        // Filter listings
+        function filterListings() {
+            activeFilters.search = document.getElementById('searchInput').value.toLowerCase();
+            activeFilters.openNow = document.getElementById('openNowFilter').checked;
+
+            const filtered = allListings.filter(listing => {
+                // Category filter
+                if (activeFilters.categories.size > 0 && !activeFilters.categories.has(listing.Category)) {
+                    return false;
+                }
+
+                // District filter
+                if (activeFilters.districts.size > 0 && !activeFilters.districts.has(listing.District)) {
+                    return false;
+                }
+
+                // Search filter
+                if (activeFilters.search) {
+                    const searchText = `${listing.Name} ${listing.Category} ${listing.District} ${listing.Pet_Policy_Details}`.toLowerCase();
+                    if (!searchText.includes(activeFilters.search)) {
+                        return false;
+                    }
+                }
+
+                // Open now filter (simplified - would need proper time checking)
+                if (activeFilters.openNow && listing.Hours) {
+                    if (listing.Hours.includes('24/7')) {
+                        return true;
+                    }
+                    // Add more sophisticated time checking here
+                }
+
+                return true;
+            });
+
+            displayListings(filtered);
+            displayMapMarkers(filtered);
+            document.getElementById('resultsCount').textContent = filtered.length;
+        }
+
+        // Display listings
+        function displayListings(listings = allListings) {
+            const container = document.getElementById('listingsContainer');
+
+            if (listings.length === 0) {
+                container.innerHTML = `
+                    <div class="p-6 text-center text-gray-500">
+                        <p class="text-lg">😕 No results found</p>
+                        <p class="text-sm mt-2">Try adjusting your filters</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Group by category
+            const grouped = {};
+            listings.forEach(listing => {
+                if (!grouped[listing.Category]) {
+                    grouped[listing.Category] = [];
+                }
+                grouped[listing.Category].push(listing);
+            });
+
+            container.innerHTML = '';
+
+            Object.entries(grouped).forEach(([category, items]) => {
+                const color = categoryColors[category]?.color || '#95A5A6';
+                const icon = categoryColors[category]?.icon || '📌';
+
+                container.innerHTML += `
+                    <div class="mb-6">
+                        <h3 class="text-lg font-bold mb-3 flex items-center" style="color: ${color}">
+                            <span class="text-2xl mr-2">${icon}</span>
+                            ${category.toUpperCase()} (${items.length})
+                        </h3>
+                        <div class="space-y-3">
+                            ${items.map(listing => createListingCard(listing, color)).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        // Create listing card HTML
+        function createListingCard(listing, color) {
+            const hasPhone = listing.Contact_Number && !listing.Contact_Number.includes('Contact via');
+            const hasWhatsApp = listing.WhatsApp_Link && listing.WhatsApp_Link.startsWith('http');
+            const hasWebsite = listing.Website && listing.Website.startsWith('http');
+            const isOpen247 = listing.Hours && listing.Hours.includes('24/7');
+
+            return `
+                <div class="listing-card bg-white rounded-lg p-4 border-l-4 shadow-sm" style="border-color: ${color}">
+                    <h4 class="font-bold text-lg text-gray-800">${listing.Name}</h4>
+                    <p class="text-sm text-gray-600 mb-2">📍 ${listing.District || 'Abu Dhabi'}</p>
+
+                    ${listing.Pet_Policy_Details ? `
+                        <p class="text-sm text-gray-700 mb-3 line-clamp-2">${listing.Pet_Policy_Details}</p>
+                    ` : ''}
+
+                    ${listing.Hours ? `
+                        <p class="text-xs text-gray-600 mb-2">
+                            🕒 ${listing.Hours}
+                            ${isOpen247 ? '<span class="ml-2 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-bold">24/7 EMERGENCY</span>' : ''}
+                        </p>
+                    ` : ''}
+
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        ${hasPhone ? `
+                            <a href="tel:${listing.Contact_Number}"
+                               class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 flex items-center">
+                                📞 Call
+                            </a>
+                        ` : ''}
+                        ${hasWhatsApp ? `
+                            <a href="${listing.WhatsApp_Link}" target="_blank"
+                               class="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 flex items-center">
+                                💬 WhatsApp
+                            </a>
+                        ` : ''}
+                        ${hasWebsite ? `
+                            <a href="${listing.Website}" target="_blank"
+                               class="px-3 py-1.5 bg-gray-600 text-white rounded-lg text-sm font-semibold hover:bg-gray-700 flex items-center">
+                                🌐 Website
+                            </a>
+                        ` : ''}
+                        ${listing.Address ? `
+                            <button onclick="showOnMap('${listing.Name.replace(/'/g, "\\'")}')"
+                                    class="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-semibold hover:bg-purple-700 flex items-center">
+                                🗺️ Map
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Display map markers
+        function displayMapMarkers(listings = allListings) {
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+
+            // Abu Dhabi approximate geocoding (simplified - real implementation would use geocoding API)
+            const districtCoords = {
+                'Al Muroor': [24.4539, 54.3773],
+                'Khalifa City': [24.4239, 54.5478],
+                'Khalifa City A': [24.4239, 54.5478],
+                'Al Khalidiyah': [24.4753, 54.3568],
+                'Musaffah ICAD I': [24.3547, 54.4960],
+                'Musaffah': [24.3547, 54.4960],
+                'Yas Island': [24.4883, 54.6049],
+                'Yas Bay Waterfront': [24.4883, 54.6049],
+                'Yas Marina': [24.4672, 54.6079],
+                'Saadiyat Island': [24.5417, 54.4378],
+                'Al Reem Island': [24.4970, 54.4020],
+                'Al Raha Beach': [24.4472, 54.6416],
+                'Al Bateen': [24.4567, 54.3445],
+                'Al Nahyan': [24.4685, 54.3692],
+                'Near Airport': [24.4330, 54.6511],
+                'Al Khubeirah': [24.4783, 54.3889],
+                'Al Reef Villas': [24.4172, 54.6015],
+                'Al Mushrif': [24.4478, 54.3901],
+                'Al Salam Street': [24.4758, 54.3642],
+                'Al Hisn': [24.4816, 54.3558],
+                'Tourist Club Area': [24.4939, 54.3655],
+                'Al Rahah': [24.4472, 54.6416]
+            };
+
+            listings.forEach((listing, index) => {
+                let coords = districtCoords[listing.District] || [24.4539, 54.3773];
+                // Add small random offset to prevent exact overlap
+                coords = [
+                    coords[0] + (Math.random() - 0.5) * 0.01,
+                    coords[1] + (Math.random() - 0.5) * 0.01
+                ];
+
+                const color = categoryColors[listing.Category]?.color || '#95A5A6';
+                const icon = categoryColors[listing.Category]?.icon || '📌';
+
+                const customIcon = L.divIcon({
+                    className: 'custom-marker',
+                    html: `<div style="background-color: ${color}; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3); font-size: 16px;">${icon}</div>`,
+                    iconSize: [30, 30]
+                });
+
+                const marker = L.marker(coords, { icon: customIcon }).addTo(map);
+
+                const popupContent = `
+                    <div style="min-width: 200px;">
+                        <h3 style="font-weight: bold; margin-bottom: 5px; color: ${color};">${icon} ${listing.Name}</h3>
+                        <p style="font-size: 12px; color: #666; margin-bottom: 5px;">${listing.Category}</p>
+                        ${listing.Contact_Number && !listing.Contact_Number.includes('Contact via') ?
+                            `<p style="font-size: 12px; margin-bottom: 3px;">📞 ${listing.Contact_Number}</p>` : ''}
+                        ${listing.Hours ? `<p style="font-size: 12px; margin-bottom: 5px;">🕒 ${listing.Hours}</p>` : ''}
+                        ${listing.Address ? `<p style="font-size: 11px; color: #888; margin-bottom: 8px;">📍 ${listing.Address}</p>` : ''}
+                        <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px;">
+                            ${listing.Contact_Number && !listing.Contact_Number.includes('Contact via') ?
+                                `<a href="tel:${listing.Contact_Number}" style="background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 11px;">📞 Call</a>` : ''}
+                            ${listing.WhatsApp_Link && listing.WhatsApp_Link.startsWith('http') ?
+                                `<a href="${listing.WhatsApp_Link}" target="_blank" style="background: #10b981; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 11px;">💬 Chat</a>` : ''}
+                        </div>
+                    </div>
+                `;
+
+                marker.bindPopup(popupContent);
+                markers.push(marker);
+            });
+
+            // Fit map to show all markers if there are any
+            if (markers.length > 0) {
+                const group = L.featureGroup(markers);
+                map.fitBounds(group.getBounds().pad(0.1));
+            }
+        }
+
+        // Show specific marker on map
+        function showOnMap(name) {
+            const listing = allListings.find(l => l.Name === name);
+            if (listing) {
+                const marker = markers.find(m => {
+                    const popupContent = m.getPopup().getContent();
+                    return popupContent.includes(name);
+                });
+                if (marker) {
+                    map.setView(marker.getLatLng(), 15);
+                    marker.openPopup();
+                    // Scroll to top on mobile
+                    if (window.innerWidth < 768) {
+                        window.scrollTo(0, 0);
+                    }
+                }
+            }
+        }
+
+        // Toggle between map and list view on mobile
+        function toggleView() {
+            const sidebar = document.getElementById('sidebar');
+            const mapDiv = document.getElementById('map');
+            const toggleText = document.getElementById('viewToggleText');
+
+            if (sidebar.classList.contains('hidden')) {
+                sidebar.classList.remove('hidden');
+                mapDiv.classList.add('hidden');
+                toggleText.textContent = '🗺️ Map';
+            } else {
+                sidebar.classList.add('hidden');
+                mapDiv.classList.remove('hidden');
+                toggleText.textContent = '📋 List';
+                setTimeout(() => map.invalidateSize(), 100);
+            }
+        }
+
+        // Initialize on page load
+        window.onload = function() {
+            initMap();
+            loadData();
+        };
+    </script>
+</body>
+</html>
